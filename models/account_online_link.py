@@ -35,8 +35,9 @@ class AccountJournal(models.Model):
 
         link = online_acc.account_online_link_id
         if link and link.provider == 'birbank':
-            _logger.info("[BIRBANK] Provider is Birbank. Redirecting to Link Action.")
-            return link.action_fetch_transactions()
+            _logger.info(f"[BIRBANK] Targeted Sync for Account: {online_acc.name}")
+            # CHANGE: Pass the specific account ID so we don't sync everything
+            return link.action_fetch_transactions(target_account_id=online_acc.id)
 
         return super().manual_sync()
 
@@ -117,9 +118,10 @@ class AccountOnlineLink(models.Model):
             'context': {'default_type': 'bank'},
         }
 
-    def action_fetch_transactions(self):
+    def action_fetch_transactions(self, target_account_id=None):
         """
         The Main Sync Button Logic.
+        Supports fetching ALL accounts (default) or just ONE (if target_account_id is passed).
         """
         self.ensure_one()
         if self.provider != 'birbank':
@@ -132,7 +134,18 @@ class AccountOnlineLink(models.Model):
             if self.state != 'connected':
                 self.write({'state': 'connected'})
 
-            for online_account in self.account_online_account_ids:
+            # ---------------------------------------------------------
+            # LOGIC CHANGE: Filter accounts if a target is provided
+            # ---------------------------------------------------------
+            if target_account_id:
+                # Sync ONLY the requested account
+                accounts_to_process = self.account_online_account_ids.filtered(lambda a: a.id == target_account_id)
+            else:
+                # Sync ALL accounts (Configuration menu behavior)
+                accounts_to_process = self.account_online_account_ids
+            # ---------------------------------------------------------
+
+            for online_account in accounts_to_process:
                 _logger.info(f"[BIRBANK] Processing Account: {online_account.name}")
 
                 # 1. Fetch raw transactions from API
@@ -150,17 +163,20 @@ class AccountOnlineLink(models.Model):
                     total_new_lines += count
                     _logger.info(f"[BIRBANK] Successfully created {count} new statement lines.")
                 except Exception as inner_e:
+                    # Log but allow other accounts to proceed if we were syncing multiple
                     _logger.error(f"[BIRBANK] Database Write Failed: {safe_str(inner_e)}")
                     _logger.error(traceback.format_exc())
-                    # We raise here to show the user the specific error
-                    raise UserError(_("Database Write Error on %s: %s") % (online_account.name, safe_str(inner_e)))
+                    # Only raise immediately if we are targeting a single account (UX is better)
+                    if target_account_id:
+                        raise UserError(_("Database Write Error on %s: %s") % (online_account.name, safe_str(inner_e)))
 
-            # Update success status
-            self.write({
-                'last_success_date': fields.Datetime.now(),
-                'last_error_message': False,
-                'state': 'connected'
-            })
+            # Update success status (only update Link timestamp if we synced everything or it's the only one)
+            if not target_account_id or len(self.account_online_account_ids) == 1:
+                self.write({
+                    'last_success_date': fields.Datetime.now(),
+                    'last_error_message': False,
+                    'state': 'connected'
+                })
 
             return {
                 'type': 'ir.actions.client',
@@ -448,7 +464,7 @@ class AccountOnlineAccount(models.Model):
     def _custom_create_lines(self, transactions):
         """
         MANUALLY create bank statement lines.
-        Use this instead of Odoo internal methods to avoid version compatibility issues.
+        Replaces missing Odoo 18 internal methods.
         """
         self.ensure_one()
         StatementLine = self.env['account.bank.statement.line']
@@ -468,12 +484,11 @@ class AccountOnlineAccount(models.Model):
             raise UserError(f"No Journal linked to account {self.name}. Cannot save transactions.")
 
         # 2. Duplicate Check
-        # Extract all incoming IDs
         incoming_ids = [t['online_transaction_identifier'] for t in transactions if
                         t.get('online_transaction_identifier')]
 
-        # Find which of these already exist in this journal
         if incoming_ids:
+            # We batch search for existing IDs to avoid looping database calls
             existing_lines = StatementLine.search([
                 ('journal_id', '=', journal.id),
                 ('online_transaction_identifier', 'in', incoming_ids)
@@ -499,7 +514,6 @@ class AccountOnlineAccount(models.Model):
                 'journal_id': journal.id,
             }
 
-            # Add partner name if available
             if tx.get('partner_name'):
                 vals['partner_name'] = tx['partner_name']
 
