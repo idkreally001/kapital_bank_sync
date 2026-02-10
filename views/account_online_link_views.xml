@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_account_online_link_kanban_birbank" model="ir.ui.view">
+        <field name="name">account.online.link.kanban.birbank</field>
+        <field name="model">account.online.link</field>
+        <field name="arch" type="xml">
+            <kanban create="true" class="o_kanban_dashboard">
+                <field name="id"/>
+                <field name="state"/>
+                <field name="birbank_username"/>
+                <field name="last_success_date"/>
+                <field name="last_error_message"/>
+                <field name="journal_count"/>
+                <templates>
+                    <t t-name="kanban-box">
+                        <div class="oe_kanban_global_click">
+                            <div class="o_kanban_card_header">
+                                <div class="o_kanban_card_header_title">
+                                    <div class="h5 mb0">
+                                        <t t-esc="record.birbank_username.value"/>
+                                    </div>
+                                    <div class="small text-muted" t-if="record.last_success_date.raw">
+                                        Last Sync: <field name="last_success_date" widget="remaining_days"/>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="container o_kanban_card_content mt-3">
+                                <div class="row">
+                                    <div class="col-6">
+                                        <button name="action_initialize_connection" type="object" class="btn btn-primary btn-sm w-100">
+                                            Sync Now
+                                        </button>
+                                    </div>
+                                    <div class="col-6 text-end">
+                                        <span t-if="record.state.raw == 'connected'" class="badge text-bg-success">Connected</span>
+                                        <span t-if="record.state.raw == 'error'" class="badge text-bg-danger">Error</span>
+                                        <span t-if="record.state.raw == 'draft'" class="badge text-bg-secondary">Draft</span>
+                                    </div>
+                                </div>
+                                <div t-if="record.last_error_message.raw" class="alert alert-danger mt-2 p-1 small" role="alert">
+                                    <t t-esc="record.last_error_message.value"/>
+                                </div>
+                                <div class="mt-2 text-muted small">
+                                    <i class="fa fa-book"/> <t t-esc="record.journal_count.value"/> Linked Journals
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <record id="view_account_online_link_form_birbank" model="ir.ui.view">
+        <field name="name">account.online.link.form.birbank</field>
+        <field name="model">account.online.link</field>
+        <field name="inherit_id" ref="account_online_synchronization.account_online_link_view_form"/>
+        <field name="mode">primary</field>
+        <field name="arch" type="xml">
+
+            <xpath expr="//header" position="replace">
+                <header>
+                    <button name="action_initialize_connection"
+                            string="Connect &amp; Sync"
+                            type="object"
+                            class="oe_highlight"
+                            invisible="state == 'connected'"/>
+
+                    <button name="action_initialize_connection"
+                            string="Re-Sync"
+                            type="object"
+                            class="btn-secondary"
+                            invisible="state != 'connected'"/>
+
+                    <button name="action_reset_connection"
+                            string="Edit Credentials"
+                            type="object"
+                            confirm="Reset connection? This will unlock the settings."
+                            invisible="state == 'draft'"/>
+
+                    <field name="state" widget="statusbar"/>
+                </header>
+            </xpath>
+
+            <xpath expr="//sheet" position="replace">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_journals"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-university"
+                                invisible="journal_count == 0">
+                            <field name="journal_count" widget="statinfo" string="Journals"/>
+                        </button>
+                    </div>
+
+                    <div class="oe_title">
+                        <label for="birbank_username" string="Birbank User ID"/>
+                        <h1><field name="birbank_username" placeholder="e.g. user@company.com" readonly="state == 'connected'"/></h1>
+                    </div>
+
+                    <group>
+                        <group string="Credentials">
+                            <field name="provider" invisible="1"/>
+                            <field name="birbank_password" password="True" required="1" readonly="state == 'connected'"/>
+                            <field name="birbank_env" widget="radio" options="{'horizontal': true}" readonly="state == 'connected'"/>
+                        </group>
+                        <group string="Sync Status">
+                            <field name="birbank_initial_sync_date" readonly="is_date_locked"/>
+                            <field name="is_date_locked" invisible="1"/>
+                            <field name="last_success_date"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Fetched Accounts">
+                            <field name="account_online_account_ids" readonly="1">
+                                <list create="0" delete="0" decoration-danger="not is_linked" decoration-success="is_linked">
+                                    <field name="name"/>
+                                    <field name="account_number" string="IBAN"/>
+                                    <field name="balance" string="Balance"/>
+                                    <field name="currency_code"/>
+
+                                    <field name="linked_journal_id" widget="many2one_clickable" optional="show"/>
+                                    <field name="is_linked" column_invisible="1"/>
+
+                                    <button name="action_create_journal"
+                                            string="Create Journal"
+                                            type="object"
+                                            class="btn-primary btn-sm"
+                                            invisible="is_linked"/>
+                                </list>
+                            </field>
+                            <p class="text-muted" style="margin-top: 10px;">
+                                <i class="fa fa-info-circle"/>
+                                Accounts in <span class="text-danger">Red</span> are not linked.
+                                Click <b>"Create Journal"</b> to auto-setup.
+                            </p>
+                        </page>
+                    </notebook>
+                </sheet>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="action_birbank_dashboard" model="ir.actions.act_window">
+        <field name="name">Birbank Connections</field>
+        <field name="res_model">account.online.link</field>
+        <field name="view_mode">kanban,form</field>
+        <field name="domain">[('provider', '=', 'birbank')]</field>
+        <field name="context">{'default_provider': 'birbank'}</field>
+        <field name="view_ids" eval="[(5, 0, 0),
+            (0, 0, {'view_mode': 'kanban', 'view_id': ref('view_account_online_link_kanban_birbank')}),
+            (0, 0, {'view_mode': 'form', 'view_id': ref('view_account_online_link_form_birbank')})]"/>
+    </record>
+
+    <menuitem id="menu_birbank_root"
+              name="Birbank Sync"
+              parent="account.menu_finance_configuration"
+              sequence="5"
+              action="action_birbank_dashboard"/>
+</odoo>
